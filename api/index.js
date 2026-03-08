@@ -16,28 +16,40 @@ export default async function handler(req) {
   }
 
   try {
-    // 2. Lock onto the exact ElectronHub endpoint
-    const url = new URL('https://api.electronhub.top/v1/chat/completions');
+    // 2. THE NUCLEAR OPTION: Do NOT clone headers. Build completely new ones.
+    const auth = req.headers.get('Authorization') || '';
+    const cleanHeaders = new Headers({
+      'Content-Type': 'application/json',
+      'Authorization': auth,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+      'Accept': 'application/json'
+    });
 
-    // 3. Clone headers and spoof the browser
-    const headers = new Headers(req.headers);
-    headers.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-    headers.delete('Host');
-    headers.delete('Origin');
-    headers.delete('Referer');
+    // 3. Extract only the raw text, destroy the Janitor AI fingerprint
+    let cleanBodyText = '';
+    if (req.method === 'POST') {
+      const rawBody = await req.json();
+      
+      // We are dropping Janitor's custom stop tokens, rep penalties, and top_p settings.
+      // This makes the payload look completely generic.
+      const cleanBody = {
+        model: "deepseek-chat", // Force standard model tag
+        messages: rawBody.messages,
+        stream: rawBody.stream || false,
+        temperature: 0.8 // Standard default
+      };
+      cleanBodyText = JSON.stringify(cleanBody);
+    }
 
-    // 4. THE FIX: Forward the raw stream with duplex: 'half'
-    const fetchOptions = {
+    // 4. Send the completely synthetic "Ghost" request
+    const response = await fetch('https://api.electronhub.top/v1/chat/completions', {
       method: req.method,
-      headers: headers,
-      redirect: 'follow',
-      body: (req.method !== 'GET' && req.method !== 'HEAD') ? req.body : undefined,
-      duplex: 'half' // <-- THIS prevents the Vercel 500 crash!
-    };
+      headers: cleanHeaders,
+      body: req.method === 'POST' ? cleanBodyText : undefined,
+      duplex: 'half' // Keep the stream fix to prevent Vercel from crashing
+    });
 
-    const response = await fetch(url, fetchOptions);
-
-    // 5. Pipe the response back to Janitor AI
+    // 5. Pipe the response back to Janitor AI safely
     const responseHeaders = new Headers(response.headers);
     responseHeaders.set('Access-Control-Allow-Origin', '*');
 
@@ -50,6 +62,5 @@ export default async function handler(req) {
       status: 500,
       headers: { 'Access-Control-Allow-Origin': '*' }
     });
-    
   }
 }
