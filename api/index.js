@@ -3,7 +3,7 @@ export const config = {
 };
 
 export default async function handler(req) {
-  // 1. Perfect CORS Preflight
+  // 1. CORS Preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, {
       headers: {
@@ -16,26 +16,47 @@ export default async function handler(req) {
   }
 
   try {
-    // 2. Force the correct target route
     const url = new URL(req.url);
     url.hostname = 'api.electronhub.top';
-    url.pathname = '/v1/chat/completions'; 
+    url.pathname = '/v1/chat/completions';
 
-    // 3. Strip problematic headers so ElectronHub doesn't choke
+    // 2. WAF Bypass: Spoof a real browser and strip server headers
     const headers = new Headers(req.headers);
+    headers.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+    headers.set('Accept', 'application/json');
     headers.delete('Origin');
     headers.delete('Referer');
     headers.delete('Host');
-    headers.delete('Content-Length'); // Let fetch auto-calculate this
-    headers.delete('Transfer-Encoding'); // Prevents the streaming 500 error!
+    headers.delete('Content-Length');
+    headers.delete('Transfer-Encoding');
 
-    // 4. THE FIX: Buffer the entire chat message first instead of streaming it
     let bodyData = null;
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      bodyData = await req.text(); 
+
+    // 3. Payload Scrubbing: Rebuild the JSON to hide Janitor AI
+    if (req.method === 'POST') {
+      try {
+        const rawBody = await req.json();
+        
+        // Build a hyper-clean payload
+        const cleanBody = {
+          model: "deepseek-v3.2:free", // Forces the standard model, ignores Janitor settings
+          messages: rawBody.messages,
+          stream: rawBody.stream || false
+        };
+
+        // Only pass standard parameters, dropping Janitor's custom tracking
+        if (rawBody.temperature) cleanBody.temperature = rawBody.temperature;
+        if (rawBody.max_tokens) cleanBody.max_tokens = rawBody.max_tokens;
+
+        bodyData = JSON.stringify(cleanBody);
+        headers.set('Content-Type', 'application/json');
+      } catch (err) {
+        // Fallback if it's not JSON
+        bodyData = await req.text();
+      }
     }
 
-    // 5. Forward the fully packaged request
+    // 4. Send the disguised payload
     const response = await fetch(url.toString(), {
       method: req.method,
       headers: headers,
@@ -43,7 +64,7 @@ export default async function handler(req) {
       redirect: 'follow'
     });
 
-    // 6. Force CORS on the way back
+    // 5. Force CORS on the return trip
     const responseHeaders = new Headers(response.headers);
     responseHeaders.set('Access-Control-Allow-Origin', '*');
 
