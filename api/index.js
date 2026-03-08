@@ -16,17 +16,18 @@ export default async function handler(req) {
   }
 
   try {
-    // 2. Route to target
+    // 2. Force the correct target route
     const url = new URL(req.url);
     url.hostname = 'api.electronhub.top';
+    url.pathname = '/v1/chat/completions'; // This forces the traffic to the right place!
 
     // 3. Strip all identifying headers
     const headers = new Headers(req.headers);
     headers.delete('Origin');
     headers.delete('Referer');
-    headers.delete('Host'); // This is the crucial fix!
+    headers.delete('Host');
 
-    // 4. Safely forward the body without dropping the chat message
+    // 4. Safely forward the body
     const fetchOptions = {
       method: req.method,
       headers: headers,
@@ -38,7 +39,7 @@ export default async function handler(req) {
 
     const response = await fetch(url.toString(), fetchOptions);
 
-    // 5. Force CORS on the way back so Janitor AI accepts it
+    // 5. Force CORS on the way back
     const responseHeaders = new Headers(response.headers);
     responseHeaders.set('Access-Control-Allow-Origin', '*');
 
